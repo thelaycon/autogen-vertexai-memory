@@ -34,7 +34,7 @@ from autogen_core.memory import MemoryContent, MemoryMimeType
 
 # Configure
 config = VertexaiMemoryConfig(
-    api_resource_name="projects/YOUR_PROJECT/locations/us-central1/memories/YOUR_MEMORY",
+    api_resource_name="projects/xxxxxxxxxx/locations/us-central1/reasoningEngines/xxxxxxxxxxxxxxxx",
     project_id="YOUR_PROJECT_ID",
     location="us-central1",
     user_id="user123"
