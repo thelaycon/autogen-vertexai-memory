@@ -7,8 +7,10 @@ and retrieve contextual information across conversations.
 
 from typing import Any
 
+from pydantic import BaseModel
+
 from vertexai import Client
-from autogen_core import CancellationToken
+from autogen_core import CancellationToken, Component
 from autogen_core.memory import (
     Memory,
     UpdateContextResult,
@@ -20,7 +22,23 @@ from autogen_core.model_context import ChatCompletionContext
 from autogen_core.models import SystemMessage
 
 
-class VertexaiMemory(Memory):
+class VertexaiMemoryConfig(BaseModel):
+    """Configuration for VertexAI Memory.
+
+    Attributes:
+        api_resource_name (str): Full resource name of the VertexAI memory.
+        project_id (str): Google Cloud project ID.
+        location (str): GCP region where the memory resource is located.
+        user_id (str): Unique identifier for the user associated with the memory.
+    """
+
+    api_resource_name: str
+    project_id: str
+    location: str
+    user_id: str
+
+
+class VertexaiMemory(Memory, Component[VertexaiMemoryConfig]):
     """Memory implementation using Google Cloud VertexAI Memory service.
 
     This class implements the Autogen Memory protocol to store and retrieve
@@ -52,12 +70,11 @@ class VertexaiMemory(Memory):
     """
 
     component_type = "memory"
+    component_config_schema = VertexaiMemoryConfig
 
     def __init__(
         self,
-        api_resource_name: str,
-        project_id: str,
-        location: str,
+        config: VertexaiMemoryConfig | None = None,
         client: Client | None = None,
     ) -> None:
         """Initialize the VertexAI Memory instance.
@@ -77,9 +94,12 @@ class VertexaiMemory(Memory):
             ...     location="us-central1"
             ... )
         """
-        self.api_resource_name = api_resource_name
-        self.project_id = project_id
-        self.location = location
+        if config is not None:
+            self.api_resource_name = config.api_resource_name
+            self.project_id = config.project_id
+            self.location = config.location
+            self.user_id = config.user_id
+
         self.client = client
 
     async def vertexai_client(self) -> Client:
@@ -127,7 +147,7 @@ class VertexaiMemory(Memory):
             >>> print(len(result.memories.results))  # Number of memories added
         """
         # Query all memories without filtering
-        contents = await self.query()
+        contents = await self.query("Information about the user")
         results = contents.results
 
         # Return empty result if no memories found
@@ -153,7 +173,6 @@ class VertexaiMemory(Memory):
     async def add(
         self,
         content: MemoryContent,
-        user_id: str,
         cancellation_token: CancellationToken | None = None,
     ) -> None:
         """Add a new memory to VertexAI storage.
@@ -165,8 +184,6 @@ class VertexaiMemory(Memory):
         Args:
             content: Memory content to store. The content will be converted
                 to a string representation before storage.
-            user_id: Unique identifier for the user this memory belongs to.
-                Used to scope and retrieve user-specific memories.
             cancellation_token: Optional token to cancel the operation.
                 Currently not actively monitored but accepted for protocol
                 compliance.
@@ -180,7 +197,7 @@ class VertexaiMemory(Memory):
             ...     content="User prefers dark mode",
             ...     mime_type=MemoryMimeType.TEXT
             ... )
-            >>> await memory.add(content, user_id="user123")
+            >>> await memory.add(content)
 
         Note:
             The memory is scoped to both the application (using api_resource_name)
@@ -196,13 +213,12 @@ class VertexaiMemory(Memory):
             direct_memories_source={
                 "direct_memories": [{"fact": str(content.content)}]
             },
-            scope={"app_name": self.api_resource_name, "user_id": user_id},
+            scope={"app_name": self.api_resource_name, "user_id": self.user_id},
         )
 
     async def query(
         self,
         query: str | MemoryContent = "",
-        user_id: str = "",
         cancellation_token: CancellationToken | None = None,
         **kwargs: Any,
     ) -> MemoryQueryResult:
@@ -215,8 +231,6 @@ class VertexaiMemory(Memory):
             query: Search query string or MemoryContent object. If empty string,
                 returns all memories for the user. For semantic search, provide
                 a descriptive query.
-            user_id: Unique identifier for the user whose memories to retrieve.
-                If empty, may return memories across all users (use with caution).
             cancellation_token: Optional token to cancel the operation.
                 Currently not actively monitored but accepted for protocol
                 compliance.
@@ -231,7 +245,6 @@ class VertexaiMemory(Memory):
             >>> # Semantic search
             >>> results = await memory.query(
             ...     query="What are the user's preferences?",
-            ...     user_id="user123"
             ... )
             >>>
             >>> # Get all memories
@@ -258,21 +271,19 @@ class VertexaiMemory(Memory):
             retrieved_memories = list(
                 self.client.agent_engines.memories.retrieve(
                     name=self.api_resource_name,
-                    scope={"app_name": self.api_resource_name, "user_id": user_id},
+                    scope={"app_name": self.api_resource_name, "user_id": self.user_id},
                     similarity_search_params={
                         "search_query": query_text,
                         "top_k": 3,  # Return top 3 most relevant memories
                     },
                 )
             )
-            # Debug output - consider removing in production
-            print(retrieved_memories)
         else:
             # Retrieve all memories for the user
             retrieved_memories = list(
                 self.client.agent_engines.memories.retrieve(
                     name=self.api_resource_name,
-                    scope={"user_id": user_id},
+                    scope={"user_id": self.user_id},
                 )
             )
 
