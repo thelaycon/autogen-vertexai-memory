@@ -160,7 +160,7 @@ Configuration model for VertexAI Memory.
 
 ```python
 VertexaiMemoryConfig(
-    api_resource_name: str,  # Full resource name: "projects/{project}/locations/{location}/memories/{memory}"
+    api_resource_name: str,  # Full resource name: "projects/{project}/locations/{location}/"
     project_id: str,         # Google Cloud project ID
     location: str,           # GCP region (e.g., "us-central1", "europe-west1")
     user_id: str            # Unique user identifier for memory isolation
@@ -312,7 +312,7 @@ async with VertexaiMemory(config=config) as memory:
 ```python
 # User 1's memories
 user1_config = VertexaiMemoryConfig(
-    api_resource_name="projects/my-project/locations/us-central1/memories/app-memory",
+    api_resource_name="projects/my-project/locations/us-central1/......................",
     project_id="my-project",
     location="us-central1",
     user_id="user1"
@@ -321,7 +321,7 @@ user1_memory = VertexaiMemory(config=user1_config)
 
 # User 2's memories (isolated from User 1)
 user2_config = VertexaiMemoryConfig(
-    api_resource_name="projects/my-project/locations/us-central1/memories/app-memory",
+    api_resource_name="projects/my-project/locations/us-central1/........................",
     project_id="my-project",
     location="us-central1",
     user_id="user2"
@@ -345,7 +345,7 @@ config = VertexaiMemoryToolConfig(
     project_id="my-project",
     location="us-central1",
     user_id="user123",
-    api_resource_name="projects/my-project/locations/us-central1/memories/agent-memory"
+    api_resource_name="projects/my-project/locations/us-c........................"
 )
 
 # Share across multiple tools
@@ -441,14 +441,6 @@ gcloud auth application-default print-access-token
 
 # Set explicit credentials
 export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account-key.json"
-```
-
-### Memory Resource Not Found
-
-Ensure your `api_resource_name` is correct:
-```python
-# Format: projects/{project_id}/locations/{location}/memories/{memory_id}
-api_resource_name = "projects/my-project/locations/us-central1/memories/my-memory"
 ```
 
 ### Empty Query Results
