@@ -177,7 +177,7 @@ class VertexaiMemory(Memory, Component[VertexaiMemoryConfig]):
         """Invalidate the current cache.
 
         This should be called whenever memories are modified (add/delete operations).
-        """i
+        """
         self._cache = None
         self._cache_timestamp = 0.0
 
