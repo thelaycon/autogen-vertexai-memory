@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "autogen-vertexai-memory"
-version = "0.1.27"
+version = "0.1.27.2"
 description = "VertexAI Memory integration for Autogen agents"
 authors = ["thelaycon <tobitobitobiwhy@gmail.com>"]
 license = "MIT"

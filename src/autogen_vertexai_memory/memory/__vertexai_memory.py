@@ -4,7 +4,6 @@ This module extends the base VertexAI Memory implementation with intelligent
 caching to reduce API calls and improve performance.
 """
 
-import asyncio
 import os
 import time
 from typing import Any, Dict, List, Optional
@@ -72,17 +71,18 @@ class VertexaiMemoryConfig(BaseModel):
     def validate_not_empty(cls, v: str, info: ValidationInfo) -> str:
         """Validate that required fields are not empty strings."""
         if not v or not v.strip():
-            field_name = info.field_name or "Unknown Field"
-
             env_var_map = {
                 "api_resource_name": "VERTEX_API_RESOURCE_NAME",
                 "project_id": "VERTEX_PROJECT_ID",
                 "location": "VERTEX_LOCATION",
                 "user_id": "VERTEX_USER_ID",
             }
+            field_name: str | None = info.field_name
+            if not field_name:
+                raise ValueError("Field name is missing")
             env_var = env_var_map.get(field_name, field_name.upper())
             raise ValueError(
-                f"{field_name} must be provided or {env_var} "
+                f"{info.field_name} must be provided or {env_var} "
                 f"environment variable must be set"
             )
         return v
@@ -96,6 +96,14 @@ class VertexaiMemory(Memory, Component[VertexaiMemoryConfig]):
     - Automatic cache invalidation on writes
     - Configurable TTL for cache entries
     - Thread-safe cache operations
+
+    Attributes:
+        component_type (str): Component identifier ("memory").
+        component_config_schema (type): Configuration model class.
+        _cache (Optional[MemoryQueryResult]): Cached memory results.
+        _cache_timestamp (float): Timestamp when cache was last updated.
+        _cache_enabled (bool): Whether caching is enabled.
+        _cache_ttl_seconds (int): Cache time-to-live in seconds.
     """
 
     component_type = "memory"
@@ -106,7 +114,12 @@ class VertexaiMemory(Memory, Component[VertexaiMemoryConfig]):
         config: Optional[VertexaiMemoryConfig] = None,
         client=None,
     ) -> None:
-        """Initialize the VertexAI Memory instance with caching support."""
+        """Initialize the VertexAI Memory instance with caching support.
+
+        Args:
+            config (Optional[VertexaiMemoryConfig]): Configuration object.
+            client : Pre-configured VertexAI client.
+        """
         if config is not None:
             self.api_resource_name = config.api_resource_name
             self.project_id = config.project_id
@@ -128,14 +141,10 @@ class VertexaiMemory(Memory, Component[VertexaiMemoryConfig]):
         self._cache: Optional[MemoryQueryResult] = None
         self._cache_timestamp: float = 0.0
 
-    def _ensure_client(self) -> None:
-        """Initialize the VertexAI client if not already done.
-
-        This should be called inside a worker thread to avoid blocking.
-        """
+    async def vertexai_client(self) -> Client:
+        """Initialize and return the VertexAI client instance."""
         if self.client is None:
             if not self.api_resource_name:
-                # Fallback to defaults/env vars if not set in init
                 config = VertexaiMemoryConfig()
                 self.api_resource_name = config.api_resource_name
                 self.project_id = config.project_id
@@ -144,8 +153,14 @@ class VertexaiMemory(Memory, Component[VertexaiMemoryConfig]):
 
             self.client = Client(project=self.project_id, location=self.location)
 
+        return self.client
+
     def _is_cache_valid(self) -> bool:
-        """Check if the current cache is still valid."""
+        """Check if the current cache is still valid.
+
+        Returns:
+            bool: True if cache exists and hasn't expired, False otherwise.
+        """
         if not self._cache_enabled:
             return False
 
@@ -159,12 +174,19 @@ class VertexaiMemory(Memory, Component[VertexaiMemoryConfig]):
         return elapsed < self._cache_ttl_seconds
 
     def _invalidate_cache(self) -> None:
-        """Invalidate the current cache."""
+        """Invalidate the current cache.
+
+        This should be called whenever memories are modified (add/delete operations).
+        """i
         self._cache = None
         self._cache_timestamp = 0.0
 
     def _update_cache(self, result: MemoryQueryResult) -> None:
-        """Update the cache with fresh results."""
+        """Update the cache with fresh results.
+
+        Args:
+            result (MemoryQueryResult): Fresh query results to cache.
+        """
         if self._cache_enabled:
             self._cache = result
             self._cache_timestamp = time.time()
@@ -174,14 +196,22 @@ class VertexaiMemory(Memory, Component[VertexaiMemoryConfig]):
     ) -> UpdateContextResult:
         """Inject relevant memories into the chat completion context with caching.
 
-        This method is async and internally calls self.query (which is now non-blocking).
+        This method uses caching to avoid repeated API calls:
+        - First call: Fetches from VertexAI and caches results
+        - Subsequent calls: Returns cached results if still valid
+        - After cache expiry: Fetches fresh data and updates cache
+
+        Args:
+            model_context (ChatCompletionContext): Chat completion context to update.
+
+        Returns:
+            UpdateContextResult: Result containing retrieved memories.
         """
         # Check if we have valid cached data
         if self._is_cache_valid():
             contents = self._cache
         else:
             # Cache miss or expired - fetch from VertexAI
-            # self.query is now properly async (non-blocking)
             contents = await self.query("Information about the user")
             # Update cache with fresh results
             self._update_cache(contents)
@@ -210,24 +240,22 @@ class VertexaiMemory(Memory, Component[VertexaiMemoryConfig]):
         content: MemoryContent,
         cancellation_token: Optional[CancellationToken] = None,
     ) -> None:
-        """Store a new memory and invalidate the cache."""
+        """Store a new memory and invalidate the cache.
 
-        def _sync_add():
-            self._ensure_client()
-            self.client.agent_engines.memories.generate(
-                name=self.api_resource_name,
-                direct_memories_source={
-                    "direct_memories": [{"fact": str(content.content)}]
-                },
-                scope={"app_name": self.api_resource_name, "user_id": self.user_id},
-            )
+        Args:
+            content (MemoryContent): The memory content to store.
+            cancellation_token (Optional[CancellationToken]): Cancellation token.
+        """
+        if self.client is None:
+            await self.vertexai_client()
 
-        # Offload blocking call to thread
-        try:
-            await asyncio.to_thread(_sync_add)
-        except Exception as e:
-            print(f"Error adding memory to VertexAI: {e}")
-            raise e
+        self.client.agent_engines.memories.generate(
+            name=self.api_resource_name,
+            direct_memories_source={
+                "direct_memories": [{"fact": str(content.content)}]
+            },
+            scope={"app_name": self.api_resource_name, "user_id": self.user_id},
+        )
 
         # Invalidate cache since we added new data
         self._invalidate_cache()
@@ -240,41 +268,40 @@ class VertexaiMemory(Memory, Component[VertexaiMemoryConfig]):
     ) -> MemoryQueryResult:
         """Retrieve memories from VertexAI storage using semantic search.
 
-        Wraps the blocking VertexAI client calls in asyncio.to_thread.
+        Note: This method does NOT use caching as queries may vary.
+        Only update_context uses caching since it always queries the same way.
+
+        Args:
+            query (str | MemoryContent): The search query.
+            cancellation_token (Optional[CancellationToken]): Cancellation token.
+            **kwargs (Any): Additional keyword arguments.
+
+        Returns:
+            MemoryQueryResult: Query results.
         """
+        if self.client is None:
+            await self.vertexai_client()
 
-        def _sync_query() -> List[Any]:
-            self._ensure_client()
+        if query != "":
+            query_text = query if isinstance(query, str) else str(query.content)
 
-            if query != "":
-                query_text = query if isinstance(query, str) else str(query.content)
-                return list(
-                    self.client.agent_engines.memories.retrieve(
-                        name=self.api_resource_name,
-                        scope={
-                            "app_name": self.api_resource_name,
-                            "user_id": self.user_id,
-                        },
-                        similarity_search_params={
-                            "search_query": query_text,
-                            "top_k": 3,
-                        },
-                    )
+            retrieved_memories = list(
+                self.client.agent_engines.memories.retrieve(
+                    name=self.api_resource_name,
+                    scope={"app_name": self.api_resource_name, "user_id": self.user_id},
+                    similarity_search_params={
+                        "search_query": query_text,
+                        "top_k": 3,
+                    },
                 )
-            else:
-                return list(
-                    self.client.agent_engines.memories.retrieve(
-                        name=self.api_resource_name,
-                        scope={"user_id": self.user_id},
-                    )
+            )
+        else:
+            retrieved_memories = list(
+                self.client.agent_engines.memories.retrieve(
+                    name=self.api_resource_name,
+                    scope={"user_id": self.user_id},
                 )
-
-        # Offload blocking call to thread
-        try:
-            retrieved_memories = await asyncio.to_thread(_sync_query)
-        except Exception as e:
-            print(f"Error querying VertexAI memory: {e}")
-            retrieved_memories = []
+            )
 
         results = [
             MemoryContent(
@@ -286,17 +313,14 @@ class VertexaiMemory(Memory, Component[VertexaiMemoryConfig]):
         return MemoryQueryResult(results=results)
 
     async def clear(self) -> None:
-        """Permanently delete the entire memory resource and invalidate cache."""
+        """Permanently delete the entire memory resource and invalidate cache.
 
-        def _sync_clear():
-            self._ensure_client()
-            self.client.delete(force=True)
+        ⚠️ WARNING: This operation is IRREVERSIBLE.
+        """
+        if self.client is None:
+            await self.vertexai_client()
 
-        try:
-            await asyncio.to_thread(_sync_clear)
-        except Exception as e:
-            print(f"Error clearing VertexAI memory: {e}")
-            pass
+        self.client.delete(force=True)
 
         # Invalidate cache since all data is deleted
         self._invalidate_cache()
@@ -304,42 +328,30 @@ class VertexaiMemory(Memory, Component[VertexaiMemoryConfig]):
     async def close(self) -> None:
         """Release resources and clear cache."""
         self._invalidate_cache()
-        # No explicit close needed for Vertex Client usually, but good practice to clear ref
-        self.client = None
 
     async def generate_memories_from_events(
         self, user_id: str, events: List[Dict[str, str]]
     ) -> Dict[str, str]:
-        """Generate memories from events. Generation is non-blocking."""
+        """Generate memories from events. Generation is non-blocking.
+        Args:
+            user_id (str): The ID of the user for whom memories are being generated.
+            events (List[Dict[str, str]]): A list of events to generate memories from.
+        """
+        if self.client is None:
+            await self.vertexai_client()
 
-        def _sync_generate():
-            self._ensure_client()
+        # Convert to acceptable format
+        formatted_events = [
+            {"content": {"role": event["role"], "parts": [{"text": event["content"]}]}}
+            for event in events
+        ]
 
-            # Convert to acceptable format
-            formatted_events = [
-                {
-                    "content": {
-                        "role": event["role"],
-                        "parts": [{"text": event["content"]}],
-                    }
-                }
-                for event in events
-            ]
-
-            self.client.agent_engines.memories.generate(
-                name=self.api_resource_name,
-                direct_contents_source={"events": formatted_events},
-                scope={"user_id": user_id},
-                config={
-                    "wait_for_completion": False,
-                },
-            )
-
-        try:
-            await asyncio.to_thread(_sync_generate)
-            return {
-                "status": "ok",
-                "message": "Generating memories for user " + user_id,
-            }
-        except Exception as e:
-            return {"status": "error", "message": str(e)}
+        self.client.agent_engines.memories.generate(
+            name=self.api_resource_name,
+            direct_contents_source={"events": formatted_events},
+            scope={"user_id": user_id},
+            config={
+                "wait_for_completion": False,
+            },
+        )
+        return {"status": "ok", "message": "Generating memories for user " + user_id}

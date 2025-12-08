@@ -66,6 +66,7 @@ class VertexaiMemoryToolConfig(BaseModel):
         Validate that required fields are not empty strings.
         """
         if not v or not v.strip():
+            # Handle potential None for field_name safely
             field_name = info.field_name or "Unknown Field"
 
             env_var_map = {
@@ -106,12 +107,12 @@ class BaseVertexaiMemoryTool:
         self.user_id = self._config.user_id
         self.api_resource_name = self._config.api_resource_name
 
+        # Type hint client as Optional[Any] or specifically Client if type is known
         self.client: Optional[Any] = None
 
-    def _ensure_client(self) -> None:
+    def initialize_client(self) -> None:
         """
-        Internal helper to ensure client exists.
-        Should be called inside the worker thread.
+        Establish connection to the VertexAI service.
         """
         if self.client is None:
             self.client = Client(project=self.project_id, location=self.location)
@@ -143,36 +144,29 @@ class SearchVertexaiMemoryTool(
         args: SearchQueryInputArgs,
         cancellation_token: Optional[CancellationToken] = None,
     ) -> SearchQueryReturn:
-        # We define the sync operation to include client initialization
-        # This prevents 'Client()' from blocking the main event loop
-        def _retrieve_memories_sync() -> List[str]:
-            try:
-                self._ensure_client()
+        self.initialize_client()
 
-                # Retrieve from Vertex AI
-                response = list(
-                    self.client.agent_engines.memories.retrieve(
-                        name=self.api_resource_name,
-                        scope={
-                            "app_name": self.api_resource_name,
-                            "user_id": self.user_id,
-                        },
-                        similarity_search_params={
-                            "search_query": args.query,
-                            "top_k": args.top_k,
-                        },
-                    )
+        # Ensure client is initialized for type checkers
+        if not self.client:
+            raise RuntimeError("Failed to initialize VertexAI Client")
+
+        def _retrieve_memories_sync() -> List[Any]:
+            # self.client is Any, so this bypasses strict attribute checking,
+            # which is necessary given the dynamic nature of the Vertex AI SDK structure here.
+            return list(
+                self.client.agent_engines.memories.retrieve(
+                    name=self.api_resource_name,
+                    scope={"app_name": self.api_resource_name, "user_id": self.user_id},
+                    similarity_search_params={
+                        "search_query": args.query,
+                        "top_k": args.top_k,
+                    },
                 )
-                return [memory.memory.fact for memory in response]
-            except Exception as e:
-                # Log error here if logging is available
-                print(f"Error querying VertexAI memory: {e}")
-                return []
+            )
 
-        # Offload the entire block to a thread
-        results = await asyncio.to_thread(_retrieve_memories_sync)
-
-        return SearchQueryReturn(results=results)
+        retrieved_memories_list = await asyncio.to_thread(_retrieve_memories_sync)
+        fact_strings = [memory.memory.fact for memory in retrieved_memories_list]
+        return SearchQueryReturn(results=fact_strings)
 
 
 class UpdateVertexaiMemoryTool(
@@ -201,26 +195,28 @@ class UpdateVertexaiMemoryTool(
         args: UpdateMemoryInputArgs,
         cancellation_token: Optional[CancellationToken] = None,
     ) -> UpdateMemoryReturn:
-        def _generate_memory_sync() -> UpdateMemoryReturn:
-            try:
-                self._ensure_client()
+        self.initialize_client()
 
-                self.client.agent_engines.memories.generate(
-                    name=self.api_resource_name,
-                    direct_memories_source={
-                        "direct_memories": [{"fact": str(args.content)}]
-                    },
-                    scope={"app_name": self.api_resource_name, "user_id": self.user_id},
-                )
-                return UpdateMemoryReturn(
-                    success=True,
-                    message=f"Successfully stored memory: {args.content[:50]}...",
-                )
-            except Exception as e:
-                return UpdateMemoryReturn(
-                    success=False, message=f"Failed to store memory: {str(e)}"
-                )
+        # Ensure client is initialized for type checkers
+        if not self.client:
+            raise RuntimeError("Failed to initialize VertexAI Client")
 
-        # Offload entire block including initialization to thread
-        result = await asyncio.to_thread(_generate_memory_sync)
-        return result
+        def _generate_memory_sync() -> None:
+            self.client.agent_engines.memories.generate(
+                name=self.api_resource_name,
+                direct_memories_source={
+                    "direct_memories": [{"fact": str(args.content)}]
+                },
+                scope={"app_name": self.api_resource_name, "user_id": self.user_id},
+            )
+
+        try:
+            await asyncio.to_thread(_generate_memory_sync)
+            return UpdateMemoryReturn(
+                success=True,
+                message=f"Successfully stored memory: {args.content[:50]}...",
+            )
+        except Exception as e:
+            return UpdateMemoryReturn(
+                success=False, message=f"Failed to store memory: {str(e)}"
+            )
