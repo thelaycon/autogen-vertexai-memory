@@ -58,8 +58,14 @@ class VertexaiMemoryToolConfig(BaseModel):
         default_factory=lambda: os.getenv("VERTEX_API_RESOURCE_NAME", ""),
         description="Full resource name of the VertexAI memory",
     )
+    app_name: str = Field(
+        default_factory=lambda: os.getenv("VERTEX_APP_NAME", ""),
+        description="Name of the application using the memory",
+    )
 
-    @field_validator("project_id", "location", "user_id", "api_resource_name")
+    @field_validator(
+        "project_id", "location", "user_id", "api_resource_name", "app_name"
+    )
     @classmethod
     def validate_not_empty(cls, v: str, info: ValidationInfo) -> str:
         """
@@ -73,6 +79,7 @@ class VertexaiMemoryToolConfig(BaseModel):
                 "project_id": "VERTEX_PROJECT_ID",
                 "location": "VERTEX_LOCATION",
                 "user_id": "VERTEX_USER_ID",
+                "app_name": "VERTEX_APP_NAME",
                 "api_resource_name": "VERTEX_API_RESOURCE_NAME",
             }
             env_var = env_var_map.get(field_name, field_name.upper())
@@ -106,6 +113,7 @@ class BaseVertexaiMemoryTool:
         self.location = self._config.location
         self.user_id = self._config.user_id
         self.api_resource_name = self._config.api_resource_name
+        self.app_name = self._config.app_name
 
         # Type hint client as Optional[Any] or specifically Client if type is known
         self.client: Optional[Any] = None
@@ -156,7 +164,7 @@ class SearchVertexaiMemoryTool(
             return list(
                 self.client.agent_engines.memories.retrieve(
                     name=self.api_resource_name,
-                    scope={"app_name": self.api_resource_name, "user_id": self.user_id},
+                    scope={"app_name": self.app_name, "user_id": self.user_id},
                     similarity_search_params={
                         "search_query": args.query,
                         "top_k": args.top_k,
@@ -207,7 +215,7 @@ class UpdateVertexaiMemoryTool(
                 direct_memories_source={
                     "direct_memories": [{"fact": str(args.content)}]
                 },
-                scope={"app_name": self.api_resource_name, "user_id": self.user_id},
+                scope={"app_name": self.app_name, "user_id": self.user_id},
             )
 
         try:

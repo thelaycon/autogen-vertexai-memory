@@ -44,8 +44,9 @@ from autogen_core.memory import MemoryContent, MemoryMimeType
 
 # Configure memory with caching enabled (default)
 config = VertexaiMemoryConfig(
-    api_resource_name="projects/my-project/locations/us-central1/......./",
-    project_id="my-project",
+    api_resource_name="projects/my-project-id/locations/us-central1/reasoningEngines/1234567890123456789",
+    app_name="1234567890123456789",
+    project_id="my-project-id",
     location="us-central1",
     user_id="user123",
     cache_enabled=True,        # Enable caching (default)
@@ -62,7 +63,7 @@ await memory.add(
     )
 )
 
-# Generate, updates, and deletes memories from conversation events (non-blocking)
+# Generate memories from conversation events (non-blocking)
 events = [
     {"role": "user", "content": "I love hiking in the mountains"},
     {"role": "model", "content": "That's wonderful! Do you have a favorite trail?"},
@@ -72,7 +73,7 @@ result = await memory.generate_memories_from_events(
     user_id="user123",
     events=events
 )
-# VertexAI will automatically extract facts like "User loves hiking in mountains". If there are redundant memories, VertexAI will update or delete them.
+# VertexAI will automatically extract facts like "User loves hiking in mountains"
 
 # Semantic search for relevant memories
 results = await memory.query(query="programming preferences")
@@ -112,10 +113,11 @@ print(f"Added {len(result.memories.results)} memories to context")
 You can also configure using environment variables:
 
 ```bash
-export VERTEX_PROJECT_ID="my-project"
+export VERTEX_PROJECT_ID="my-project-id"
 export VERTEX_LOCATION="us-central1"
 export VERTEX_USER_ID="user123"
-export VERTEX_API_RESOURCE_NAME="projects/my-project/locations/us-central1/memories/agent-memory"
+export VERTEX_APP_NAME="1234567890123456789"
+export VERTEX_API_RESOURCE_NAME="projects/my-project-id/locations/us-central1/reasoningEngines/1234567890123456789"
 ```
 
 ```python
@@ -139,10 +141,11 @@ from autogen_vertexai_memory.tools import (
 
 # Configure memory tools
 memory_config = VertexaiMemoryToolConfig(
-    project_id="my-project",
+    project_id="my-project-id",
     location="us-central1",
     user_id="user123",
-    api_resource_name="projects/my-project/locations/us-central1/memories/agent-memory"
+    app_name="1234567890123456789",
+    api_resource_name="projects/my-project-id/locations/us-central1/reasoningEngines/1234567890123456789"
 )
 
 # Create memory tools
@@ -162,13 +165,6 @@ agent = AssistantAgent(
 )
 
 # Now the agent can search and store memories automatically!
-# Example conversation:
-# User: "I prefer Python for data analysis"
-# Agent uses update_vertexai_memory_tool to store this preference
-# 
-# Later...
-# User: "What language should I use for my data project?"
-# Agent uses search_vertexai_memory_tool, retrieves the preference, and responds accordingly
 ```
 
 ## API Reference
@@ -179,7 +175,8 @@ Configuration model for VertexAI Memory with caching support.
 
 ```python
 VertexaiMemoryConfig(
-    api_resource_name: str,      # Full resource name: "projects/{project}/locations/{location}/"
+    api_resource_name: str,      # Full resource name: "projects/{project}/locations/{location}/reasoningEngines/{engine_id}"
+    app_name: str,               # Application name (typically the reasoning engine ID)
     project_id: str,             # Google Cloud project ID
     location: str,               # GCP region (e.g., "us-central1", "europe-west1")
     user_id: str,                # Unique user identifier for memory isolation
@@ -189,13 +186,14 @@ VertexaiMemoryConfig(
 ```
 
 **Caching Behavior:**
-- Cache is used by `update_context()` method to reduce repeated API calls
+- Cache is used by `update_context()` to reduce repeated API calls
 - Cache is automatically invalidated on `add()` and `clear()` operations
 - Set `cache_ttl_seconds=0` or `cache_enabled=False` to disable caching
 - `query()` method does NOT use caching as queries may vary
 
 **Environment Variables:**
 - `VERTEX_API_RESOURCE_NAME`
+- `VERTEX_APP_NAME`
 - `VERTEX_PROJECT_ID`
 - `VERTEX_LOCATION`
 - `VERTEX_USER_ID`
@@ -229,7 +227,7 @@ await memory.add(
 Search memories or retrieve all. Does NOT use caching.
 
 ```python
-# Semantic search (top 3 results)
+# Semantic search (top 3 results by default)
 results = await memory.query(query="user preferences")
 
 # Get all memories
@@ -244,7 +242,7 @@ Inject memories into chat context as system message. Uses caching to reduce API 
 ```python
 context = ChatCompletionContext()
 result = await memory.update_context(context)
-# Context now includes relevant memories
+# Context now includes relevant memories in chronological order
 ```
 
 **Caching Details:**
@@ -255,37 +253,30 @@ result = await memory.update_context(context)
 **Returns:** `UpdateContextResult` with retrieved memories
 
 #### `generate_memories_from_events(user_id, events)`
-Generate memories from a list of conversation events. This is a non-blocking operation that triggers VertexAI to automatically extract and store relevant facts from the conversation history.
+Generate memories from conversation events. Non-blocking operation that triggers VertexAI to automatically extract and store relevant facts.
 
 ```python
-# Define conversation events
 events = [
     {"role": "user", "content": "I'm working on a machine learning project"},
     {"role": "model", "content": "That's great! What framework are you using?"},
-    {"role": "user", "content": "I prefer TensorFlow for deep learning"},
-    {"role": "model", "content": "TensorFlow is an excellent choice for neural networks"}
+    {"role": "user", "content": "I prefer TensorFlow for deep learning"}
 ]
 
-# Generate memories from events (non-blocking)
 result = await memory.generate_memories_from_events(
     user_id="user123",
     events=events
 )
 print(result)
 # Output: {'status': 'ok', 'message': 'Generating memories for user user123'}
-
-# VertexAI will analyze the conversation and automatically extract facts like:
-# - "User is working on a machine learning project"
-# - "User prefers TensorFlow for deep learning"
 ```
 
 **Parameters:**
-- `user_id` (str): The ID of the user for whom memories are being generated
-- `events` (List[Dict[str, str]]): List of conversation events with "role" ("user" or "model") and "content" keys
+- `user_id` (str): User ID for memory generation
+- `events` (List[Dict[str, str]]): Events with "role" (user/model) and "content" keys
 
-**Returns:** Dict with status and message confirming memory generation has started
+**Returns:** Dict with status and message
 
-**Note:** This operation is non-blocking (`wait_for_completion=False`). VertexAI processes events asynchronously and extracts relevant facts automatically. Memories will be available for querying once processing completes.
+**Note:** Non-blocking operation (`wait_for_completion=False`). VertexAI processes asynchronously.
 
 #### `clear()`
 Permanently delete all memories and invalidate cache (irreversible).
@@ -305,14 +296,15 @@ await memory.close()
 
 #### VertexaiMemoryToolConfig
 
-Shared configuration for memory tools.
+Configuration for memory tools.
 
 ```python
 VertexaiMemoryToolConfig(
     project_id: str,
     location: str,
     user_id: str,
-    api_resource_name: str
+    api_resource_name: str,
+    app_name: str
 )
 ```
 
@@ -321,10 +313,11 @@ VertexaiMemoryToolConfig(
 - `VERTEX_LOCATION`
 - `VERTEX_USER_ID`
 - `VERTEX_API_RESOURCE_NAME`
+- `VERTEX_APP_NAME`
 
 #### SearchVertexaiMemoryTool
 
-Tool for semantic memory search. Automatically used by agents to retrieve relevant memories.
+Tool for semantic memory search.
 
 ```python
 SearchVertexaiMemoryTool(config: Optional[VertexaiMemoryToolConfig] = None, **kwargs)
@@ -333,14 +326,14 @@ SearchVertexaiMemoryTool(config: Optional[VertexaiMemoryToolConfig] = None, **kw
 **Tool Name:** `search_vertexai_memory_tool`  
 **Description:** Perform a search with given parameters using vertexai memory bank  
 **Parameters:**
-- `query` (str): Semantic search query to retrieve information about user
-- `top_k` (int, default=5): Maximum number of relevant memories to retrieve
+- `query` (str): Semantic search query
+- `top_k` (int, default=5): Maximum number of memories to retrieve
 
 **Returns:** `SearchQueryReturn` with list of matching memory strings
 
 #### UpdateVertexaiMemoryTool
 
-Tool for storing new memories. Automatically used by agents to save important information.
+Tool for storing new memories.
 
 ```python
 UpdateVertexaiMemoryTool(config: Optional[VertexaiMemoryToolConfig] = None, **kwargs)
@@ -349,19 +342,135 @@ UpdateVertexaiMemoryTool(config: Optional[VertexaiMemoryToolConfig] = None, **kw
 **Tool Name:** `update_vertexai_memory_tool`  
 **Description:** Store a new memory fact in the VertexAI memory bank for the user  
 **Parameters:**
-- `content` (str): The memory content to store as a fact in the memory bank
+- `content` (str): Memory content to store
 
 **Returns:** `UpdateMemoryReturn` with success status and message
 
-## Advanced Examples
+## Real-World Example: Personal Shopping Assistant
 
-### Configuring Cache Behavior
+Here's a complete example of building a shopping assistant that remembers user preferences:
+
+```python
+import os
+from autogen_agentchat.agents import AssistantAgent
+from autogen_ext.models.openai import OpenAIChatCompletionClient
+from autogen_vertexai_memory.memory import VertexaiMemory, VertexaiMemoryConfig
+from autogen_vertexai_memory.tools import (
+    SearchVertexaiMemoryTool,
+    UpdateVertexaiMemoryTool,
+    VertexaiMemoryToolConfig,
+)
+
+# Configure memory for a specific user
+memory_config = VertexaiMemoryConfig(
+    api_resource_name="projects/my-project-id/locations/us-central1/reasoningEngines/1234567890123456789",
+    app_name="1234567890123456789",
+    project_id="my-project-id",
+    location="us-central1",
+    user_id="customer123",
+    cache_enabled=True,
+    cache_ttl_seconds=300
+)
+
+# Initialize memory
+memory = VertexaiMemory(config=memory_config)
+
+# Configure tools with same settings
+tool_config = VertexaiMemoryToolConfig(
+    api_resource_name="projects/my-project-id/locations/us-central1/reasoningEngines/1234567890123456789",
+    app_name="1234567890123456789",
+    project_id="my-project-id",
+    location="us-central1",
+    user_id="customer123"
+)
+
+# Create memory tools
+search_tool = SearchVertexaiMemoryTool(config=tool_config)
+update_tool = UpdateVertexaiMemoryTool(config=tool_config)
+
+# Create shopping assistant agent
+shopping_agent = AssistantAgent(
+    name="shopping_assistant",
+    model_client=OpenAIChatCompletionClient(
+        model="gpt-4o",
+        api_key=os.environ["OPENAI_API_KEY"]
+    ),
+    tools=[search_tool, update_tool],
+    memory=[memory],
+    system_message="""You are a helpful shopping assistant that remembers customer preferences.
+    
+    Use search_vertexai_memory_tool to recall what you know about the customer.
+    Use update_vertexai_memory_tool to store new preferences you learn.
+    
+    Always personalize recommendations based on stored memories."""
+)
+
+# Example conversation
+async def main():
+    # First interaction - agent learns preferences
+    print("User: I'm looking for running shoes, I prefer Nike brand")
+    async for chunk in shopping_agent.run_stream(
+        task="I'm looking for running shoes, I prefer Nike brand"
+    ):
+        if hasattr(chunk, "content") and chunk.content:
+            print(chunk.content, end="", flush=True)
+    
+    print("\n\n---\n")
+    
+    # Later conversation - agent recalls preferences
+    print("User: Show me some athletic shoes")
+    async for chunk in shopping_agent.run_stream(
+        task="Show me some athletic shoes"
+    ):
+        if hasattr(chunk, "content") and chunk.content:
+            print(chunk.content, end="", flush=True)
+    # Agent automatically searches memory and finds "prefers Nike brand"
+
+# Batch import customer history
+async def import_customer_history():
+    """Import past purchase history as memories."""
+    past_conversations = [
+        {"role": "user", "content": "I bought those blue Nike Air Max last month"},
+        {"role": "model", "content": "Great choice! How are they working out?"},
+        {"role": "user", "content": "Love them! I wear size 10"},
+        {"role": "model", "content": "Perfect, I'll remember your size."},
+        {"role": "user", "content": "I usually shop during sales"}
+    ]
+    
+    # VertexAI extracts facts like:
+    # - "Customer bought Nike Air Max in blue"
+    # - "Customer wears size 10"
+    # - "Customer prefers shopping during sales"
+    result = await memory.generate_memories_from_events(
+        user_id="customer123",
+        events=past_conversations
+    )
+    print(result)
+
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(main())
+```
+
+**What Happens Behind the Scenes:**
+
+1. **First Message**: Agent uses `search_tool` to check existing memories (cache miss, fetches from VertexAI)
+2. **Learning**: Agent uses `update_tool` to store "Customer prefers Nike brand"
+3. **Subsequent Requests**: Agent uses `search_tool` again (cache hit, returns instantly)
+4. **Personalization**: Recommendations automatically include Nike products
+
+**Benefits:**
+- Users don't repeat preferences
+- Context persists across sessions
+- Reduced API calls with intelligent caching
+- Multi-user isolation via `user_id`
 
 ```python
 # Disable caching completely
 config = VertexaiMemoryConfig(
-    api_resource_name="projects/my-project/locations/us-central1/...",
-    project_id="my-project",
+    api_resource_name="projects/my-project-id/locations/us-central1/reasoningEngines/1234567890123456789",
+    app_name="1234567890123456789",
+    project_id="my-project-id",
     location="us-central1",
     user_id="user123",
     cache_enabled=False
@@ -369,8 +478,9 @@ config = VertexaiMemoryConfig(
 
 # Short cache TTL (30 seconds)
 config = VertexaiMemoryConfig(
-    api_resource_name="projects/my-project/locations/us-central1/...",
-    project_id="my-project",
+    api_resource_name="projects/my-project-id/locations/us-central1/reasoningEngines/1234567890123456789",
+    app_name="1234567890123456789",
+    project_id="my-project-id",
     location="us-central1",
     user_id="user123",
     cache_ttl_seconds=30
@@ -378,8 +488,9 @@ config = VertexaiMemoryConfig(
 
 # Long cache TTL (1 hour)
 config = VertexaiMemoryConfig(
-    api_resource_name="projects/my-project/locations/us-central1/...",
-    project_id="my-project",
+    api_resource_name="projects/my-project-id/locations/us-central1/reasoningEngines/1234567890123456789",
+    app_name="1234567890123456789",
+    project_id="my-project-id",
     location="us-central1",
     user_id="user123",
     cache_ttl_seconds=3600
@@ -407,15 +518,15 @@ result = await memory.generate_memories_from_events(
 print(result)
 # Output: {'status': 'ok', 'message': 'Generating memories for user user123'}
 
-# VertexAI will process the conversation and extract facts like:
+# VertexAI processes the conversation and extracts facts like:
 # - "User is a software engineer at Google"
 # - "User works with Kubernetes and Go"
 # - "User works on cloud infrastructure"
 # - "User contributes to open source projects on weekends"
 
-# Wait a moment for processing, then query the extracted memories
+# Wait for processing, then query the extracted memories
 import asyncio
-await asyncio.sleep(2)  # Give VertexAI time to process
+await asyncio.sleep(2)
 
 results = await memory.query(query="user's work")
 for mem in results.results:
@@ -429,7 +540,7 @@ from vertexai import Client
 
 # Create custom client with specific settings
 client = Client(
-    project="my-project",
+    project="my-project-id",
     location="us-central1"
 )
 
@@ -441,8 +552,9 @@ memory = VertexaiMemory(config=config, client=client)
 ```python
 # User 1's memories
 user1_config = VertexaiMemoryConfig(
-    api_resource_name="projects/my-project/locations/us-central1/...",
-    project_id="my-project",
+    api_resource_name="projects/my-project-id/locations/us-central1/reasoningEngines/1234567890123456789",
+    app_name="1234567890123456789",
+    project_id="my-project-id",
     location="us-central1",
     user_id="user1"
 )
@@ -450,8 +562,9 @@ user1_memory = VertexaiMemory(config=user1_config)
 
 # User 2's memories (isolated from User 1)
 user2_config = VertexaiMemoryConfig(
-    api_resource_name="projects/my-project/locations/us-central1/...",
-    project_id="my-project",
+    api_resource_name="projects/my-project-id/locations/us-central1/reasoningEngines/1234567890123456789",
+    app_name="1234567890123456789",
+    project_id="my-project-id",
     location="us-central1",
     user_id="user2"
 )
@@ -471,10 +584,11 @@ from autogen_vertexai_memory.tools import (
 
 # Create config once
 config = VertexaiMemoryToolConfig(
-    project_id="my-project",
+    project_id="my-project-id",
     location="us-central1",
     user_id="user123",
-    api_resource_name="projects/my-project/locations/us-central1/..."
+    app_name="1234567890123456789",
+    api_resource_name="projects/my-project-id/locations/us-central1/reasoningEngines/1234567890123456789"
 )
 
 # Share across multiple tools
@@ -493,71 +607,6 @@ agent2 = AssistantAgent(
     model_client=OpenAIChatCompletionClient(model="gpt-4"),
     tools=[search_tool]  # This agent can only search, not update
 )
-
-# Both agents use the same VertexAI client and configuration
-```
-
-## Development
-
-### Setup
-
-```bash
-# Clone repository
-git clone https://github.com/thelaycon/autogen-vertexai-memory.git
-cd autogen-vertexai-memory
-
-# Install dependencies with Poetry
-poetry install
-
-# Run tests
-poetry run pytest
-
-# Run tests with coverage
-poetry run pytest --cov=autogen_vertexai_memory --cov-report=html
-
-# Type checking
-poetry run mypy src/autogen_vertexai_memory
-
-# Linting
-poetry run ruff check src/
-```
-
-### Project Structure
-
-```
-autogen-vertexai-memory/
-├── src/
-│   └── autogen_vertexai_memory/
-│       ├── __init__.py
-│       ├── memory/
-│       │   ├── __init__.py
-│       │   └── _vertexai_memory.py    # Main memory implementation with caching
-│       └── tools/
-│           ├── __init__.py
-│           └── _vertexai_memory_tools.py  # Tool implementations
-├── tests/
-│   ├── conftest.py
-│   └── test_vertexai_memory.py
-├── pyproject.toml
-└── README.md
-```
-
-### Running Tests
-
-The test suite uses mocking to avoid real VertexAI API calls:
-
-```bash
-# Run all tests
-poetry run pytest
-
-# Run with verbose output
-poetry run pytest -v
-
-# Run specific test class
-poetry run pytest tests/test_vertexai_memory.py::TestVertexaiMemoryConfig
-
-# Run with coverage report
-poetry run pytest --cov=autogen_vertexai_memory --cov-report=term-missing
 ```
 
 ## Troubleshooting
@@ -579,8 +628,9 @@ export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account-key.json"
 all_memories = await memory.query(query="")
 print(f"Total memories: {len(all_memories.results)}")
 
-# Verify user_id matches
+# Verify user_id and app_name match
 print(f"Using user_id: {memory.user_id}")
+print(f"Using app_name: {memory.app_name}")
 ```
 
 ### Cache Not Working
@@ -593,33 +643,3 @@ print(f"Cache TTL: {memory._cache_ttl_seconds}")
 # Manually invalidate cache if needed
 memory._invalidate_cache()
 ```
-
-## Contributing
-
-Contributions are welcome! Please follow these steps:
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Make your changes with tests
-4. Run tests (`poetry run pytest`)
-5. Commit your changes (`git commit -m 'Add amazing feature'`)
-6. Push to the branch (`git push origin feature/amazing-feature`)
-7. Open a Pull Request
-
-### Development Guidelines
-
-- Write tests for new features
-- Follow existing code style
-- Update documentation for API changes
-- Ensure all tests pass before submitting PR
-
-## License
-
-MIT License - see [LICENSE](LICENSE) file for details.
-
-## Support
-
-- [GitHub Issues](https://github.com/thelaycon/autogen-vertexai-memory/issues) - Bug reports and feature requests
-- [GitHub Discussions](https://github.com/thelaycon/autogen-vertexai-memory/discussions) - Questions and community support
-- [VertexAI Documentation](https://cloud.google.com/vertex-ai/docs) - Official VertexAI docs
-- [Autogen Documentation](https://microsoft.github.io/autogen/) - Autogen framework docs

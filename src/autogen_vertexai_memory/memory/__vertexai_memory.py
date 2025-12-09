@@ -44,6 +44,10 @@ class VertexaiMemoryConfig(BaseModel):
         default_factory=lambda: os.getenv("VERTEX_API_RESOURCE_NAME", ""),
         description="Full resource name of the VertexAI memory",
     )
+    app_name: str = Field(
+        default_factory=lambda: os.getenv("VERTEX_APP_NAME", ""),
+        description="Name of the application using the VertexAI memory",
+    )
     project_id: str = Field(
         default_factory=lambda: os.getenv("VERTEX_PROJECT_ID", ""),
         description="Google Cloud project ID",
@@ -66,13 +70,16 @@ class VertexaiMemoryConfig(BaseModel):
         description="Whether to enable caching",
     )
 
-    @field_validator("api_resource_name", "project_id", "location", "user_id")
+    @field_validator(
+        "api_resource_name", "app_name", "project_id", "location", "user_id"
+    )
     @classmethod
     def validate_not_empty(cls, v: str, info: ValidationInfo) -> str:
         """Validate that required fields are not empty strings."""
         if not v or not v.strip():
             env_var_map = {
                 "api_resource_name": "VERTEX_API_RESOURCE_NAME",
+                "app_name": "VERTEX_APP_NAME",
                 "project_id": "VERTEX_PROJECT_ID",
                 "location": "VERTEX_LOCATION",
                 "user_id": "VERTEX_USER_ID",
@@ -122,6 +129,7 @@ class VertexaiMemory(Memory, Component[VertexaiMemoryConfig]):
         """
         if config is not None:
             self.api_resource_name = config.api_resource_name
+            self.app_name = config.app_name
             self.project_id = config.project_id
             self.location = config.location
             self.user_id = config.user_id
@@ -147,6 +155,7 @@ class VertexaiMemory(Memory, Component[VertexaiMemoryConfig]):
             if not self.api_resource_name:
                 config = VertexaiMemoryConfig()
                 self.api_resource_name = config.api_resource_name
+                self.app_name = config.app_name
                 self.project_id = config.project_id
                 self.location = config.location
                 self.user_id = config.user_id
@@ -254,7 +263,7 @@ class VertexaiMemory(Memory, Component[VertexaiMemoryConfig]):
             direct_memories_source={
                 "direct_memories": [{"fact": str(content.content)}]
             },
-            scope={"app_name": self.api_resource_name, "user_id": self.user_id},
+            scope={"app_name": self.app_name, "user_id": self.user_id},
         )
 
         # Invalidate cache since we added new data
@@ -288,7 +297,7 @@ class VertexaiMemory(Memory, Component[VertexaiMemoryConfig]):
             retrieved_memories = list(
                 self.client.agent_engines.memories.retrieve(
                     name=self.api_resource_name,
-                    scope={"app_name": self.api_resource_name, "user_id": self.user_id},
+                    scope={"app_name": self.app_name, "user_id": self.user_id},
                     similarity_search_params={
                         "search_query": query_text,
                         "top_k": 3,
@@ -299,7 +308,7 @@ class VertexaiMemory(Memory, Component[VertexaiMemoryConfig]):
             retrieved_memories = list(
                 self.client.agent_engines.memories.retrieve(
                     name=self.api_resource_name,
-                    scope={"user_id": self.user_id},
+                    scope={"app_name": self.app_name, "user_id": self.user_id},
                 )
             )
 
@@ -349,7 +358,7 @@ class VertexaiMemory(Memory, Component[VertexaiMemoryConfig]):
         self.client.agent_engines.memories.generate(
             name=self.api_resource_name,
             direct_contents_source={"events": formatted_events},
-            scope={"user_id": user_id},
+            scope={"app_name": self.app_name, "user_id": user_id},
             config={
                 "wait_for_completion": False,
             },
